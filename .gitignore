@@ -9,6 +9,13 @@ sendToRetina.sh
 # C extensions
 *.so
 
+.idea
+summaries*
+log*
+checkpoints
+tbFromR*
+a3c*
+
 # Distribution / packaging
 .Python
 env/
