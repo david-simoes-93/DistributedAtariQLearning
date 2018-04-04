@@ -7,14 +7,14 @@
 
 import os
 os.environ["KERAS_BACKEND"] = "tensorflow"
-from atari_environment import AtariEnvironment
+from Atari.atari_environment import AtariEnvironment
 import threading
 import tensorflow as tf
 import random
 import numpy as np
 import gym
 from keras import backend as K
-from model import build_network
+from Atari.model import build_network
 import time
 
 flags = tf.app.flags
@@ -183,7 +183,7 @@ def actor_learner_thread(thread_id, env_g, session, graph_ops, num_actions, summ
                                                             next_max_q[index + 1]) * FLAGS.gamma + r_batch[index]
                         else:  # n-step
                             discounted_rewards[index] = discounted_rewards[index + 1] * FLAGS.gamma + r_batch[index]
-                    _, global_step = session.run([grad_update, global_step_var], feed_dict={y: y_batch,
+                    _, global_step = session.run([grad_update, global_step_var], feed_dict={y: discounted_rewards,
                                                         a: a_batch,
                                                         s: s_batch})
 
