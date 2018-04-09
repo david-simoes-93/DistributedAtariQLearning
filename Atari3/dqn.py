@@ -279,6 +279,7 @@ server.
 """
 
         sess.run(self.sync)  # copy weights from shared to local
+
         rollout = self.pull_batch_from_queue()
         batch = process_rollout(rollout, gamma=0.99, lambda_=1.0)
 
@@ -310,3 +311,7 @@ server.
             self.summary_writer.add_summary(tf.Summary.FromString(fetched[0]), fetched[-1])
             self.summary_writer.flush()
         self.local_steps += 1
+
+        if self.task==0 and self.local_steps%1000==0:
+            print("Updating on-line->target")
+            sess.run(self.sync_target)  # copy weights from on-line to target
