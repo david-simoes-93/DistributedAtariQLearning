@@ -7,22 +7,29 @@
 
 import argparse
 import os
+
+import gym
+
+from Atari2.atari_environment import AtariEnvironment
+#from Atari2.envs import create_atari_env
 import tensorflow as tf
-from Maze2.ActorCriticNetwork import AC_Network
-from Maze2.A3CSlave import Worker
-import matplotlib.pyplot as mpl
-from Maze2.Bridge import GymBridge
+from Atari2.QNetwork1step import QNetwork1Step
+from Atari2.DQNSlave import Worker
+#import matplotlib.pyplot as mpl
 
-max_episode_length = 1000
-bridge_size = 40
 
-gamma = 1               # discount rate for advantage estimation and reward discounting
-a_size = 4              # Agent can move Left, Right, up down
-learning_rate = 1e-3    #
+max_episode_length = 10000
+
+gamma = 0.99  # discount rate for advantage estimation and reward discounting
+s_size = [84, 84, 4]
+a_size = 3  # Agent can move Left, Right, up down
+learning_rate = 1e-4  #
 load_model = False
 model_path = './model_dist'
 
-max_steps = 200000
+
+max_steps = 5000000
+exploration_anealing_steps = max_steps * 0.75
 
 parser = argparse.ArgumentParser()
 parser.register("type", "bool", lambda v: v.lower() == "true")
@@ -44,15 +51,17 @@ parser.add_argument(
     default="localhost",
     help="Comma-separated list of hostnames"
 )
+
 FLAGS, unparsed = parser.parse_known_args()
 
 # Create a cluster from the parameter server and worker hosts.
 hosts = []
 for (url, max_per_url) in zip(FLAGS.urls.split(","), FLAGS.slaves_per_url.split(",")):
     for i in range(int(max_per_url)):
-        hosts.append(url + ":" + str(2210 + i))
-cluster = tf.train.ClusterSpec({"a3c": hosts})
-server = tf.train.Server(cluster, job_name="a3c", task_index=FLAGS.task_index)
+        hosts.append(url + ":" + str(2410 + i))
+print(hosts)
+cluster = tf.train.ClusterSpec({"dqn": hosts})
+server = tf.train.Server(cluster, job_name="dqn", task_index=FLAGS.task_index)
 
 tf.reset_default_graph()
 
@@ -62,34 +71,30 @@ if not os.path.exists(model_path):
 if not os.path.exists('./frames'):
     os.makedirs('./frames')
 
-with tf.device(tf.train.replica_device_setter(worker_device="/job:a3c/task:%d" % FLAGS.task_index, cluster=cluster)):
+with tf.device(tf.train.replica_device_setter(worker_device="/job:dqn/task:%d" % FLAGS.task_index, cluster=cluster)):
     global_episodes = tf.contrib.framework.get_or_create_global_step()
     trainer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-    master_network = AC_Network(bridge_size, a_size, 'global', None)  # Generate global network
+    master_network = QNetwork1Step(s_size, a_size, 'global', None)  # Generate global network
 
     # Master declares worker for all slaves
     for i in range(len(hosts)):
         print("Initializing variables for slave ", i)
-
         if i == FLAGS.task_index:
-            worker = Worker(GymBridge(size=bridge_size),
-                              i, bridge_size, a_size, trainer, model_path, global_episodes)
+            worker = Worker(AtariEnvironment(gym.make("Pong-v0"), s_size[0], s_size[1], s_size[2]),
+                            i, s_size, a_size, trainer, model_path, global_episodes)
         else:
-            Worker(GymBridge(size=bridge_size),
-                   i, bridge_size, a_size, trainer, model_path, global_episodes)
+            Worker(None, i, s_size, a_size, trainer, model_path, global_episodes)
 
 print("Starting session", server.target, FLAGS.task_index)
 hooks = [tf.train.StopAtStepHook(last_step=max_steps)]
 with tf.train.MonitoredTrainingSession(master=server.target, is_chief=(FLAGS.task_index == 0),
-                                       config=tf.ConfigProto(),  # config=tf.ConfigProto(log_device_placement=True),
+                                       config=tf.ConfigProto(),
                                        save_summaries_steps=None, save_summaries_secs=None,
                                        save_checkpoint_secs=600, checkpoint_dir=model_path, hooks=hooks) as mon_sess:
     print("Started session")
     try:
-        worker.work(max_steps, max_episode_length, gamma, mon_sess)
+        worker.work(max_steps, exploration_anealing_steps, max_episode_length, gamma, mon_sess)
     except RuntimeError:
         print("Puff")
-    if FLAGS.task_index == 0:
-        mpl.savefig("plot.pdf")
 
 print("Done")
