@@ -13,7 +13,7 @@ def discount(x, gamma):
     return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
 
 
-def process_rollout(rollout, gamma, lambda_=1.0):
+def process_rollout(rollout, gamma):
     """
 given a rollout, compute its returns and the advantage
 """
@@ -83,13 +83,14 @@ is that a universe environment is _real time_.  This means that there should be 
 that would constantly interact with the environment and tell it what to do.  This thread is here.
 """
 
-    def __init__(self, env, policy, num_local_steps, visualise, min_lambda, max_expl_steps):
+    def __init__(self, env, policy, target_policy, num_local_steps, visualise, min_lambda, max_expl_steps):
         threading.Thread.__init__(self)
         self.queue = queue.Queue(5)
         self.num_local_steps = num_local_steps
         self.env = env
         self.last_features = None
         self.policy = policy
+        self.target_policy = target_policy
         self.daemon = True
         self.sess = None
         self.summary_writer = None
@@ -107,7 +108,8 @@ that would constantly interact with the environment and tell it what to do.  Thi
             self._run()
 
     def _run(self):
-        rollout_provider = env_runner(self.env, self.policy, self.num_local_steps, self.summary_writer, self.visualise,
+        rollout_provider = env_runner(self.env, self.policy, self.target_policy,
+                                      self.num_local_steps, self.summary_writer, self.visualise,
                                       self.min_exploration_rate, self.max_exploration_steps)
         while True:
             # the timeout variable exists because apparently, if one worker dies, the other workers
@@ -117,7 +119,8 @@ that would constantly interact with the environment and tell it what to do.  Thi
             self.queue.put(next(rollout_provider), timeout=600.0)
 
 
-def env_runner(env, policy, num_local_steps, summary_writer, render, min_exploration_rate, max_exploration_steps):
+def env_runner(env, policy, target_network, num_local_steps, summary_writer, render,
+               min_exploration_rate, max_exploration_steps):
     """
 The logic of the thread runner.  In brief, it constantly keeps on running
 the policy, and as long as the rollout exceeds a certain length, the thread
@@ -130,6 +133,8 @@ runner appends the policy to the queue.
     global_step = policy.global_step.eval()
     current_exploration_rate = max(min_exploration_rate, 1 - global_step/max_exploration_steps)
     possible_actions = list(range(env.action_space.n))
+
+    debug_state = np.zeros(env.observation_space.shape)
 
     while True:
         terminal_end = False
@@ -150,8 +155,12 @@ runner appends the policy to the queue.
             if render:
                 env.render()
 
+            #print(policy.value(debug_state, *last_features), target_network.value(debug_state, *last_features))
+
+            next_max_q = target_network.value(state, *features)
+
             # collect the experience
-            rollout.add(last_state, action, reward, value_, terminal, last_features)
+            rollout.add(last_state, action, reward, next_max_q, terminal, last_features)
             length += 1
             rewards += reward
 
@@ -180,7 +189,7 @@ runner appends the policy to the queue.
                 break
 
         if not terminal_end:
-            rollout.r = policy.value(last_state, *last_features)
+            rollout.r = target_network.value(last_state, *last_features)
 
         # once we have enough experience, yield it, and have the ThreadRunner place it on a queue
         yield rollout
@@ -227,7 +236,8 @@ should be computed.
             # on the one hand;  but on the other hand, we get less frequent parameter updates, which
             # slows down learning.  In this code, we found that making local steps be much
             # smaller than 20 makes the algorithm more difficult to tune and to get to work.
-            self.runner = RunnerThread(env, pi, 20, visualise, min_exploration_rate, max_exploration_steps)
+            self.runner = RunnerThread(env, pi, self.target_network, 20,
+                                       visualise, min_exploration_rate, max_exploration_steps)
 
             grads = tf.gradients(self.loss, pi.var_list)
 
@@ -253,7 +263,7 @@ should be computed.
 
             # copy global online network to global target network
             self.sync_target = tf.group(*[v1.assign(v2) for v1, v2 in
-                                          zip(self.network.var_list, self.target_network.var_list)])
+                                          zip(self.target_network.var_list, self.network.var_list)])
 
     def start(self, sess, summary_writer):
         self.runner.start_runner(sess, summary_writer)
@@ -278,10 +288,10 @@ and updates the parameters.  The update is then sent to the parameter
 server.
 """
 
-        sess.run(self.sync)  # copy weights from shared to local
+        sess.run(self.sync)  # copy weights from global to local
 
         rollout = self.pull_batch_from_queue()
-        batch = process_rollout(rollout, gamma=0.99, lambda_=1.0)
+        batch = process_rollout(rollout, gamma=0.99)
 
         should_compute_summary = self.task == 0 and self.local_steps % 11 == 0
 
@@ -312,6 +322,7 @@ server.
             self.summary_writer.flush()
         self.local_steps += 1
 
-        if self.task==0 and self.local_steps%1000==0:
+        if self.task==0 and self.local_steps%100==0:
             print("Updating on-line->target")
             sess.run(self.sync_target)  # copy weights from on-line to target
+

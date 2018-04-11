@@ -29,6 +29,7 @@ def run(args, server):
 
     env = create_env(args.env_id, client_id=str(args.task), remotes=args.remotes)
     #trainer = A3C(env, args.task, args.visualise)
+    print("My final exploration:",min_exploration_rate)
     trainer = DQN(env, args.task, args.visualise, min_exploration_rate, max_exploration_steps)
 
     # Variable names that start with "local" are not saved in checkpoints.
