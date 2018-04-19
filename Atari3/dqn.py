@@ -131,10 +131,11 @@ runner appends the policy to the queue.
     length = 0
     rewards = 0
     global_step = policy.global_step.eval()
-    current_exploration_rate = max(min_exploration_rate, 1 - global_step/max_exploration_steps)
+    current_exploration_rate = max(1 - (1 - min_exploration_rate) * (global_step / max_exploration_steps),
+                                   min_exploration_rate)
     possible_actions = list(range(env.action_space.n))
 
-    debug_state = np.zeros(env.observation_space.shape)
+    #debug_state = np.zeros(env.observation_space.shape)
 
     while True:
         terminal_end = False
@@ -168,7 +169,8 @@ runner appends the policy to the queue.
             last_features = features
 
             global_step = policy.global_step.eval()
-            current_exploration_rate = max(min_exploration_rate, 1 - global_step / max_exploration_steps)
+            current_exploration_rate = max(1 - (1 - min_exploration_rate) * (global_step / max_exploration_steps),
+                                           min_exploration_rate)
 
             if info:
                 summary = tf.Summary()
@@ -183,7 +185,8 @@ runner appends the policy to the queue.
                 if length >= timestep_limit or not env.metadata.get('semantics.autoreset'):
                     last_state = env.reset()
                 last_features = policy.get_initial_features()
-                print("Episode finished, exploration %4.2f. Sum of rewards: %d. Length: %d" % (current_exploration_rate, rewards, length))
+                print("Episode finished, exploration %4.2f. Sum of rewards: %d. Length: %d" % (
+                current_exploration_rate, rewards, length))
                 length = 0
                 rewards = 0
                 break
@@ -322,7 +325,6 @@ server.
             self.summary_writer.flush()
         self.local_steps += 1
 
-        if self.task==0 and self.local_steps%100==0:
+        if self.task == 0 and self.local_steps % 100 == 0:
             print("Updating on-line->target")
             sess.run(self.sync_target)  # copy weights from on-line to target
-

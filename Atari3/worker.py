@@ -23,7 +23,7 @@ class FastSaver(tf.train.Saver):
                                     meta_graph_suffix, False)
 
 def run(args, server):
-    num_global_steps = 10000000
+    num_global_steps = 100000000
     max_exploration_steps = num_global_steps*0.75
     min_exploration_rate = [0.01, 0.1, 0.5][args.task % 3]
 
